@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mcp-java-server": {
+      "command": "java",
+      "args": ["-jar", "/mnt/c/Users/admin/worker/Mcp_learn/target/mcp-java-server-1.0.0.jar"]
+    }
+  }
+}

@@ -1,5 +1,6 @@
 package com.example.mcp.transport;
 
+import com.example.mcp.config.ServerConfig;
 import com.example.mcp.server.McpMessage;
 import com.example.mcp.server.McpServerImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,15 +22,22 @@ public class StdioTransportProvider implements CommandLineRunner {
 
     private final McpServerImpl mcpServer;
     private final ObjectMapper objectMapper;
+    private final ServerConfig serverConfig;
 
     @Autowired
-    public StdioTransportProvider(McpServerImpl mcpServer, ObjectMapper objectMapper) {
+    public StdioTransportProvider(McpServerImpl mcpServer, ObjectMapper objectMapper, ServerConfig serverConfig) {
         this.mcpServer = mcpServer;
         this.objectMapper = objectMapper;
+        this.serverConfig = serverConfig;
     }
 
     @Override
     public void run(String... args) throws Exception {
+        if (serverConfig.getTransport().getType() != ServerConfig.Transport.Type.STDIO) {
+            logger.info("STDIO transport disabled, using {} transport", serverConfig.getTransport().getType());
+            return;
+        }
+
         logger.info("Starting STDIO transport provider...");
 
         // Check if we're running in an interactive environment

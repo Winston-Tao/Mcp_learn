@@ -3,7 +3,10 @@ spring:
     name: mcp-java-server
 
   main:
-    web-application-type: none
+    web-application-type: reactive
+
+server:
+  port: 18060
 
 mcp:
   server:
@@ -13,8 +16,6 @@ mcp:
 
     transport:
       type: STDIO
-      host: "localhost"
-      port: 8080
 
     capabilities:
       tools: true

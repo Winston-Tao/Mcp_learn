@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mcp-java-server": {
+      "command": "curl",
+      "args": [
+        "-X", "GET",
+        "http://localhost:18060/mcp/sse"
+      ],
+      "env": {}
+    }
+  }
+}
+

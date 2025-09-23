@@ -1,0 +1,44 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Debug MCP Server (Local)",
+            "request": "launch",
+            "mainClass": "com.example.mcp.McpServerApplication",
+            "projectName": "mcp-java-server",
+            "args": [],
+            "vmArgs": [
+                "-Xmx512m",
+                "-Xms256m",
+                "-Dspring.profiles.active=debug"
+            ],
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "openOnSessionStart"
+        },
+        {
+            "type": "java",
+            "name": "Debug MCP Server (Remote Debug)",
+            "request": "launch",
+            "mainClass": "com.example.mcp.McpServerApplication",
+            "projectName": "mcp-java-server",
+            "args": [],
+            "vmArgs": [
+                "-Xmx512m",
+                "-Xms256m",
+                "-Dspring.profiles.active=debug",
+                "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+            ],
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "openOnSessionStart"
+        },
+        {
+            "type": "java",
+            "name": "Attach to Remote MCP Server",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 5005,
+            "timeout": 30000
+        }
+    ]
+}

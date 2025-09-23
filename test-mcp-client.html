@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP HTTP+SSE Client Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .container { max-width: 800px; }
+        .log { background: #f5f5f5; padding: 10px; height: 400px; overflow-y: auto; border: 1px solid #ccc; }
+        .controls { margin: 20px 0; }
+        button { margin: 5px; padding: 10px; }
+        input { width: 300px; padding: 5px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MCP HTTP+SSE Client Test</h1>
+
+        <div class="controls">
+            <input type="text" id="serverUrl" value="http://localhost:18060" placeholder="Server URL">
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div id="status" class="status disconnected">Disconnected</div>
+
+        <div class="controls">
+            <button onclick="sendInitialize()">Send Initialize</button>
+            <button onclick="sendInitialized()">Send Initialized</button>
+            <button onclick="sendToolsList()">List Tools</button>
+            <button onclick="sendResourcesList()">List Resources</button>
+        </div>
+
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let endpointUri = null;
+        let serverBaseUrl = '';
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toISOString().substr(11, 12);
+            const color = type === 'error' ? 'red' : type === 'sent' ? 'blue' : type === 'received' ? 'green' : 'black';
+            logDiv.innerHTML += `<div style="color: ${color};">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            const statusDiv = document.getElementById('status');
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = 'Connected';
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = 'Disconnected';
+            }
+        }
+
+        function connect() {
+            serverBaseUrl = document.getElementById('serverUrl').value;
+            const sseUrl = `${serverBaseUrl}/mcp/sse`;
+
+            log(`Connecting to ${sseUrl}...`);
+
+            eventSource = new EventSource(sseUrl);
+
+            eventSource.onopen = function(event) {
+                log('SSE connection opened', 'info');
+                updateStatus(true);
+            };
+
+            eventSource.onmessage = function(event) {
+                log(`SSE message: ${event.data}`, 'received');
+            };
+
+            eventSource.addEventListener('endpoint', function(event) {
+                const data = JSON.parse(event.data);
+                endpointUri = data.uri;
+                log(`Received endpoint: ${endpointUri}`, 'received');
+            });
+
+            eventSource.addEventListener('message', function(event) {
+                log(`MCP Response: ${event.data}`, 'received');
+            });
+
+            eventSource.onerror = function(event) {
+                log('SSE connection error', 'error');
+                updateStatus(false);
+            };
+
+            eventSource.onclose = function(event) {
+                log('SSE connection closed', 'error');
+                updateStatus(false);
+            };
+        }
+
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                endpointUri = null;
+                updateStatus(false);
+                log('Disconnected');
+            }
+        }
+
+        function sendMessage(message) {
+            if (!endpointUri) {
+                log('No endpoint URI available. Connect first.', 'error');
+                return;
+            }
+
+            const url = `${serverBaseUrl}${endpointUri}`;
+            log(`Sending to ${url}: ${JSON.stringify(message, null, 2)}`, 'sent');
+
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-MCP-Connection-ID': 'web-client-test'
+                },
+                body: JSON.stringify(message)
+            })
+            .then(response => response.json())
+            .then(data => {
+                log(`HTTP Response: ${JSON.stringify(data, null, 2)}`, 'received');
+            })
+            .catch(error => {
+                log(`HTTP Error: ${error.message}`, 'error');
+            });
+        }
+
+        function sendInitialize() {
+            sendMessage({
+                jsonrpc: "2.0",
+                method: "initialize",
+                params: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {
+                        roots: { listChanged: false }
+                    },
+                    clientInfo: {
+                        name: "test-client",
+                        version: "1.0.0"
+                    }
+                },
+                id: 1
+            });
+        }
+
+        function sendInitialized() {
+            sendMessage({
+                jsonrpc: "2.0",
+                method: "notifications/initialized",
+                params: {}
+            });
+        }
+
+        function sendToolsList() {
+            sendMessage({
+                jsonrpc: "2.0",
+                method: "tools/list",
+                params: {},
+                id: 2
+            });
+        }
+
+        function sendResourcesList() {
+            sendMessage({
+                jsonrpc: "2.0",
+                method: "resources/list",
+                params: {},
+                id: 3
+            });
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+    </script>
+</body>
+</html>

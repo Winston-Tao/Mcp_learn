@@ -106,7 +106,7 @@ public class McpServerImpl {
 
     private Mono<McpMessage> handleInitialize(McpMessage request) {
         Map<String, Object> result = new HashMap<>();
-        result.put("protocolVersion", "2024-11-05");
+        result.put("protocolVersion", "2025-06-18");
 
         Map<String, Object> serverInfo = new HashMap<>();
         serverInfo.put("name", serverConfig.getName());
