@@ -119,10 +119,36 @@ start_server() {
     # Save PID
     echo $SERVER_PID > "$PID_FILE"
 
-    # Wait a moment and check if the server started successfully
-    sleep 2
+    # Wait and check if the server started successfully
+    log_info "Waiting for server to start..."
 
-    if ps -p $SERVER_PID > /dev/null 2>&1; then
+    local retry_count=0
+    local max_retries=10
+    local server_started=false
+
+    while [ $retry_count -lt $max_retries ]; do
+        sleep 1
+        retry_count=$((retry_count + 1))
+
+        if ps -p $SERVER_PID > /dev/null 2>&1; then
+            # Check if the server has completed initialization
+            if [ -f "$LOG_DIR/mcp-server.log" ]; then
+                if grep -q "MCP Java Server started successfully" "$LOG_DIR/mcp-server.log"; then
+                    server_started=true
+                    break
+                elif grep -q "APPLICATION FAILED TO START" "$LOG_DIR/server.out"; then
+                    log_error "Server failed to start - check application logs"
+                    break
+                fi
+            fi
+            log_debug "Server process running, waiting for initialization... ($retry_count/$max_retries)"
+        else
+            log_warn "Server process not found (PID: $SERVER_PID)"
+            break
+        fi
+    done
+
+    if [ "$server_started" = true ]; then
         log_info "Server started successfully (PID: $SERVER_PID)"
         log_info "Log files:"
         log_info "  - Application log: $LOG_DIR/mcp-server.log"
@@ -130,9 +156,29 @@ start_server() {
         log_info ""
         log_info "To stop the server, run: ./scripts/stop-server.sh"
         log_info "To view logs, run: tail -f $LOG_DIR/mcp-server.log"
+
+        # Show last few lines of startup
+        if [ -f "$LOG_DIR/server.out" ]; then
+            log_info ""
+            log_info "Recent startup log:"
+            tail -n 3 "$LOG_DIR/server.out" | sed 's/^/  /'
+        fi
     else
-        log_error "Server failed to start"
-        log_info "Check the log files for details"
+        log_error "Server failed to start or initialize within $max_retries seconds"
+        log_info "Check the log files for details:"
+
+        if [ -f "$LOG_DIR/server.out" ]; then
+            log_info ""
+            log_warn "Last 5 lines from startup log:"
+            tail -n 5 "$LOG_DIR/server.out" | sed 's/^/  /'
+        fi
+
+        if [ -f "$LOG_DIR/mcp-server.log" ]; then
+            log_info ""
+            log_warn "Last 5 lines from application log:"
+            tail -n 5 "$LOG_DIR/mcp-server.log" | sed 's/^/  /'
+        fi
+
         rm -f "$PID_FILE"
         exit 1
     fi

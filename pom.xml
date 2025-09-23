@@ -110,6 +110,12 @@
             <artifactId>reactor-core</artifactId>
         </dependency>
 
+        <!-- Jakarta Annotations (replacement for javax.annotation in Java 17+) -->
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+
         <!-- Test Dependencies -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
