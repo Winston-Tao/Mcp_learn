@@ -1,105 +1,96 @@
 package com.example.mcp.tools;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 
-import java.util.List;
 import java.util.Map;
 
 @Component
 public class CalculatorTool extends AbstractMcpTool {
 
-    public CalculatorTool() {
-        super(
-            "calculator",
-            "Performs basic mathematical calculations",
-            createInputSchema()
-        );
+    @Override
+    public String getName() {
+        return "calculator";
     }
 
-    private static Map<String, Object> createInputSchema() {
+    @Override
+    public String getDescription() {
+        return "Perform basic mathematical calculations (addition, subtraction, multiplication, division)";
+    }
+
+    @Override
+    public JsonNode getInputSchema() {
+        ObjectNode schema = objectMapper.createObjectNode();
+        schema.put("type", "object");
+
+        ObjectNode properties = objectMapper.createObjectNode();
+
+        ObjectNode operation = objectMapper.createObjectNode();
+        operation.put("type", "string");
+        operation.put("description", "Mathematical operation to perform");
+        operation.set("enum", objectMapper.valueToTree(new String[]{"add", "subtract", "multiply", "divide"}));
+        properties.set("operation", operation);
+
+        ObjectNode a = objectMapper.createObjectNode();
+        a.put("type", "number");
+        a.put("description", "First operand");
+        properties.set("a", a);
+
+        ObjectNode b = objectMapper.createObjectNode();
+        b.put("type", "number");
+        b.put("description", "Second operand");
+        properties.set("b", b);
+
+        schema.set("properties", properties);
+        schema.set("required", objectMapper.valueToTree(new String[]{"operation", "a", "b"}));
+
+        return schema;
+    }
+
+    @Override
+    protected Object doExecute(JsonNode parameters) throws Exception {
+        requireParameter(parameters, "operation");
+        requireParameter(parameters, "a");
+        requireParameter(parameters, "b");
+
+        String operation = getStringParameter(parameters, "operation");
+        double a = getDoubleParameter(parameters, "a");
+        double b = getDoubleParameter(parameters, "b");
+
+        double result;
+        switch (operation.toLowerCase()) {
+            case "add":
+                result = a + b;
+                break;
+            case "subtract":
+                result = a - b;
+                break;
+            case "multiply":
+                result = a * b;
+                break;
+            case "divide":
+                if (b == 0) {
+                    throw new IllegalArgumentException("Division by zero is not allowed");
+                }
+                result = a / b;
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported operation: " + operation);
+        }
+
+        logger.info("Calculator: {} {} {} = {}", a, operation, b, result);
+
         return Map.of(
-            "type", "object",
-            "properties", Map.of(
-                "operation", Map.of(
-                    "type", "string",
-                    "enum", List.of("add", "subtract", "multiply", "divide"),
-                    "description", "The mathematical operation to perform"
-                ),
-                "a", Map.of(
-                    "type", "number",
-                    "description", "First operand"
-                ),
-                "b", Map.of(
-                    "type", "number",
-                    "description", "Second operand"
-                )
-            ),
-            "required", List.of("operation", "a", "b")
+                "operation", operation,
+                "operands", Map.of("a", a, "b", b),
+                "result", result,
+                "expression", String.format("%.2f %s %.2f = %.2f", a, getOperatorSymbol(operation), b, result)
         );
-    }
-
-    @Override
-    protected Mono<Void> validateArguments(Map<String, Object> arguments) {
-        String operation = (String) arguments.get("operation");
-        Object a = arguments.get("a");
-        Object b = arguments.get("b");
-
-        if (operation == null) {
-            return Mono.error(new IllegalArgumentException("Missing operation"));
-        }
-
-        if (a == null || b == null) {
-            return Mono.error(new IllegalArgumentException("Missing operands"));
-        }
-
-        if (!List.of("add", "subtract", "multiply", "divide").contains(operation)) {
-            return Mono.error(new IllegalArgumentException("Invalid operation: " + operation));
-        }
-
-        if ("divide".equals(operation) && getDoubleValue(b) == 0.0) {
-            return Mono.error(new IllegalArgumentException("Division by zero"));
-        }
-
-        return Mono.empty();
-    }
-
-    @Override
-    protected Mono<List<Map<String, Object>>> doExecute(Map<String, Object> arguments) {
-        return Mono.fromCallable(() -> {
-            String operation = (String) arguments.get("operation");
-            double a = getDoubleValue(arguments.get("a"));
-            double b = getDoubleValue(arguments.get("b"));
-
-            double result = switch (operation) {
-                case "add" -> a + b;
-                case "subtract" -> a - b;
-                case "multiply" -> a * b;
-                case "divide" -> a / b;
-                default -> throw new IllegalArgumentException("Unsupported operation: " + operation);
-            };
-
-            String resultText = String.format("%.2f %s %.2f = %.2f", a, getOperatorSymbol(operation), b, result);
-            return List.of(createTextContent(resultText));
-        });
-    }
-
-    private double getDoubleValue(Object value) {
-        if (value instanceof Number) {
-            return ((Number) value).doubleValue();
-        }
-        if (value instanceof String) {
-            try {
-                return Double.parseDouble((String) value);
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Invalid number format: " + value);
-            }
-        }
-        throw new IllegalArgumentException("Invalid number type: " + value.getClass());
     }
 
     private String getOperatorSymbol(String operation) {
-        return switch (operation) {
+        return switch (operation.toLowerCase()) {
             case "add" -> "+";
             case "subtract" -> "-";
             case "multiply" -> "*";

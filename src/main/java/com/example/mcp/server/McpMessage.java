@@ -1,12 +1,11 @@
 package com.example.mcp.server;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
-import java.util.Map;
+import java.util.Objects;
 
-@JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class McpMessage {
 
@@ -20,7 +19,7 @@ public class McpMessage {
     private String method;
 
     @JsonProperty("params")
-    private Map<String, Object> params;
+    private JsonNode params;
 
     @JsonProperty("result")
     private Object result;
@@ -30,35 +29,56 @@ public class McpMessage {
 
     public McpMessage() {}
 
-    public McpMessage(Object id, String method, Map<String, Object> params) {
+    public McpMessage(Object id, String method, JsonNode params) {
         this.id = id;
         this.method = method;
         this.params = params;
     }
 
-    public static McpMessage request(Object id, String method, Map<String, Object> params) {
+    public McpMessage(Object id, Object result) {
+        this.id = id;
+        this.result = result;
+    }
+
+    public McpMessage(Object id, McpError error) {
+        this.id = id;
+        this.error = error;
+    }
+
+    public static McpMessage createRequest(Object id, String method, JsonNode params) {
         return new McpMessage(id, method, params);
     }
 
-    public static McpMessage response(Object id, Object result) {
-        McpMessage message = new McpMessage();
-        message.id = id;
-        message.result = result;
-        return message;
+    public static McpMessage createNotification(String method, JsonNode params) {
+        return new McpMessage(null, method, params);
     }
 
-    public static McpMessage error(Object id, McpError error) {
-        McpMessage message = new McpMessage();
-        message.id = id;
-        message.error = error;
-        return message;
+    public static McpMessage createResponse(Object id, Object result) {
+        return new McpMessage(id, result);
     }
 
-    public static McpMessage notification(String method, Map<String, Object> params) {
-        McpMessage message = new McpMessage();
-        message.method = method;
-        message.params = params;
-        return message;
+    public static McpMessage createErrorResponse(Object id, McpError error) {
+        return new McpMessage(id, error);
+    }
+
+    public boolean isRequest() {
+        return method != null && id != null;
+    }
+
+    public boolean isNotification() {
+        return method != null && id == null;
+    }
+
+    public boolean isResponse() {
+        return method == null && (result != null || error != null);
+    }
+
+    public boolean isSuccessResponse() {
+        return isResponse() && error == null;
+    }
+
+    public boolean isErrorResponse() {
+        return isResponse() && error != null;
     }
 
     public String getJsonrpc() {
@@ -85,11 +105,11 @@ public class McpMessage {
         this.method = method;
     }
 
-    public Map<String, Object> getParams() {
+    public JsonNode getParams() {
         return params;
     }
 
-    public void setParams(Map<String, Object> params) {
+    public void setParams(JsonNode params) {
         this.params = params;
     }
 
@@ -109,16 +129,21 @@ public class McpMessage {
         this.error = error;
     }
 
-    public boolean isRequest() {
-        return method != null && id != null;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof McpMessage that)) return false;
+        return Objects.equals(jsonrpc, that.jsonrpc) &&
+               Objects.equals(id, that.id) &&
+               Objects.equals(method, that.method) &&
+               Objects.equals(params, that.params) &&
+               Objects.equals(result, that.result) &&
+               Objects.equals(error, that.error);
     }
 
-    public boolean isResponse() {
-        return id != null && (result != null || error != null);
-    }
-
-    public boolean isNotification() {
-        return method != null && id == null;
+    @Override
+    public int hashCode() {
+        return Objects.hash(jsonrpc, id, method, params, result, error);
     }
 
     @Override

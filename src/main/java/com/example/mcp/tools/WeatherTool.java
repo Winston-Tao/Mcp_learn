@@ -1,11 +1,11 @@
 package com.example.mcp.tools;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -13,140 +13,112 @@ import java.util.Random;
 public class WeatherTool extends AbstractMcpTool {
 
     private final Random random = new Random();
-    private final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    public WeatherTool() {
-        super(
-            "weather",
-            "Gets current weather information for a specified location (simulated data)",
-            createInputSchema()
-        );
+    @Override
+    public String getName() {
+        return "weather";
     }
 
-    private static Map<String, Object> createInputSchema() {
+    @Override
+    public String getDescription() {
+        return "Get current weather information for a specified location (mock data for demonstration)";
+    }
+
+    @Override
+    public JsonNode getInputSchema() {
+        ObjectNode schema = objectMapper.createObjectNode();
+        schema.put("type", "object");
+
+        ObjectNode properties = objectMapper.createObjectNode();
+
+        ObjectNode location = objectMapper.createObjectNode();
+        location.put("type", "string");
+        location.put("description", "Location to get weather for (city, country)");
+        properties.set("location", location);
+
+        ObjectNode units = objectMapper.createObjectNode();
+        units.put("type", "string");
+        units.put("description", "Temperature units (celsius, fahrenheit)");
+        units.put("default", "celsius");
+        units.set("enum", objectMapper.valueToTree(new String[]{"celsius", "fahrenheit"}));
+        properties.set("units", units);
+
+        schema.set("properties", properties);
+        schema.set("required", objectMapper.valueToTree(new String[]{"location"}));
+
+        return schema;
+    }
+
+    @Override
+    protected Object doExecute(JsonNode parameters) throws Exception {
+        requireParameter(parameters, "location");
+
+        String location = getStringParameter(parameters, "location");
+        String units = getStringParameter(parameters, "units", "celsius");
+
+        if (location.trim().isEmpty()) {
+            throw new IllegalArgumentException("Location cannot be empty");
+        }
+
+        logger.info("Getting weather for location: {} in {}", location, units);
+
+        WeatherData weatherData = generateMockWeatherData(location, units);
+
         return Map.of(
-            "type", "object",
-            "properties", Map.of(
-                "location", Map.of(
-                    "type", "string",
-                    "description", "The city or location to get weather for"
+                "location", location,
+                "units", units,
+                "current", Map.of(
+                        "temperature", weatherData.temperature,
+                        "condition", weatherData.condition,
+                        "humidity", weatherData.humidity,
+                        "windSpeed", weatherData.windSpeed,
+                        "pressure", weatherData.pressure
                 ),
-                "units", Map.of(
-                    "type", "string",
-                    "enum", List.of("celsius", "fahrenheit"),
-                    "description", "Temperature units",
-                    "default", "celsius"
-                )
-            ),
-            "required", List.of("location")
+                "forecast", Map.of(
+                        "summary", weatherData.forecastSummary
+                ),
+                "timestamp", weatherData.timestamp,
+                "source", "Mock Weather Service"
         );
     }
 
-    @Override
-    protected Mono<Void> validateArguments(Map<String, Object> arguments) {
-        String location = (String) arguments.get("location");
+    private WeatherData generateMockWeatherData(String location, String units) {
+        WeatherData data = new WeatherData();
 
-        if (location == null || location.trim().isEmpty()) {
-            return Mono.error(new IllegalArgumentException("Location is required"));
-        }
+        String[] conditions = {"Sunny", "Partly Cloudy", "Cloudy", "Rainy", "Snowy", "Stormy"};
+        String[] forecastSummaries = {
+                "Clear skies expected for the next few days",
+                "Partly cloudy with occasional sunshine",
+                "Overcast conditions with light precipitation possible",
+                "Rain expected throughout the week",
+                "Cold weather with possible snow",
+                "Stormy weather pattern moving through the area"
+        };
 
-        String units = (String) arguments.get("units");
-        if (units != null && !List.of("celsius", "fahrenheit").contains(units)) {
-            return Mono.error(new IllegalArgumentException("Invalid units: " + units + ". Must be 'celsius' or 'fahrenheit'"));
-        }
+        data.condition = conditions[random.nextInt(conditions.length)];
+        data.forecastSummary = forecastSummaries[random.nextInt(forecastSummaries.length)];
 
-        return Mono.empty();
-    }
-
-    @Override
-    protected Mono<List<Map<String, Object>>> doExecute(Map<String, Object> arguments) {
-        return Mono.fromCallable(() -> {
-            String location = (String) arguments.get("location");
-            String units = (String) arguments.getOrDefault("units", "celsius");
-
-            WeatherData weather = generateWeatherData(location, units);
-            String weatherReport = formatWeatherReport(weather);
-
-            return List.of(createTextContent(weatherReport));
-        });
-    }
-
-    private WeatherData generateWeatherData(String location, String units) {
-        String[] conditions = {"sunny", "partly cloudy", "cloudy", "rainy", "stormy", "snowy"};
-        String condition = conditions[random.nextInt(conditions.length)];
-
-        // Generate temperature based on units
-        double temperature;
         if ("fahrenheit".equals(units)) {
-            temperature = 32 + random.nextDouble() * 68; // 32-100°F
+            data.temperature = 32 + (random.nextInt(80));
         } else {
-            temperature = random.nextDouble() * 35; // 0-35°C
+            data.temperature = -10 + random.nextInt(35);
         }
 
-        double humidity = 20 + random.nextDouble() * 60; // 20-80%
-        double windSpeed = random.nextDouble() * 25; // 0-25 km/h or mph
-        double pressure = 980 + random.nextDouble() * 50; // 980-1030 hPa
+        data.humidity = 30 + random.nextInt(60);
+        data.windSpeed = random.nextInt(25);
+        data.pressure = 980 + random.nextInt(60);
+        data.timestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
 
-        return new WeatherData(
-            location,
-            condition,
-            temperature,
-            units,
-            humidity,
-            windSpeed,
-            pressure,
-            LocalDateTime.now()
-        );
-    }
-
-    private String formatWeatherReport(WeatherData weather) {
-        String tempUnit = "celsius".equals(weather.units) ? "°C" : "°F";
-        String windUnit = "celsius".equals(weather.units) ? "km/h" : "mph";
-
-        return String.format("""
-            🌤️ Weather Report for %s
-
-            📍 Location: %s
-            🌡️  Temperature: %.1f%s
-            ☁️  Condition: %s
-            💧 Humidity: %.1f%%
-            💨 Wind Speed: %.1f %s
-            📊 Pressure: %.1f hPa
-            🕐 Last Updated: %s
-
-            Note: This is simulated weather data for demonstration purposes.
-            """,
-            weather.location,
-            weather.location,
-            weather.temperature, tempUnit,
-            weather.condition,
-            weather.humidity,
-            weather.windSpeed, windUnit,
-            weather.pressure,
-            weather.timestamp.format(formatter)
-        );
+        return data;
     }
 
     private static class WeatherData {
-        final String location;
-        final String condition;
-        final double temperature;
-        final String units;
-        final double humidity;
-        final double windSpeed;
-        final double pressure;
-        final LocalDateTime timestamp;
-
-        WeatherData(String location, String condition, double temperature, String units,
-                   double humidity, double windSpeed, double pressure, LocalDateTime timestamp) {
-            this.location = location;
-            this.condition = condition;
-            this.temperature = temperature;
-            this.units = units;
-            this.humidity = humidity;
-            this.windSpeed = windSpeed;
-            this.pressure = pressure;
-            this.timestamp = timestamp;
-        }
+        int temperature;
+        String condition;
+        int humidity;
+        int windSpeed;
+        int pressure;
+        String forecastSummary;
+        String timestamp;
     }
 }

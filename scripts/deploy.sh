@@ -1,234 +1,151 @@
 #!/bin/bash
 
-# MCP Java Server Deployment Script
+# MCP Server Deploy Script
+# This script builds and prepares the MCP Server for deployment
 
 set -e
 
-# Configuration
-DOCKER_IMAGE="mcp-java-server"
-DOCKER_TAG="latest"
-COMPOSE_FILE="docker/docker-compose.yml"
+echo "=== MCP Server Deployment Script ==="
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Check if Maven is available
+if ! command -v mvn &> /dev/null; then
+    echo "Error: Maven is not installed or not in PATH"
+    exit 1
+fi
 
-# Functions
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
+# Check if Java 21 is available
+if ! java -version 2>&1 | grep -q "21\|22\|23"; then
+    echo "Error: Java 21 or higher is required"
+    exit 1
+fi
 
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
+echo "Building MCP Server..."
 
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+# Clean and build the project
+mvn clean package -DskipTests
 
-log_debug() {
-    echo -e "${BLUE}[DEBUG]${NC} $1"
-}
+if [ $? -ne 0 ]; then
+    echo "Build failed!"
+    exit 1
+fi
 
-# Check dependencies
-check_dependencies() {
-    log_info "Checking dependencies..."
+echo "Build successful!"
 
-    # Check Docker
-    if ! command -v docker &> /dev/null; then
-        log_error "Docker is not installed"
-        exit 1
-    fi
+# Create deployment directory structure
+echo "Creating deployment structure..."
+mkdir -p deploy/bin
+mkdir -p deploy/conf
+mkdir -p deploy/logs
+mkdir -p deploy/data
 
-    # Check Docker Compose
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-        log_error "Docker Compose is not installed"
-        exit 1
-    fi
+# Copy JAR file
+cp target/mcp-server-*.jar deploy/bin/
 
-    # Check if Docker daemon is running
-    if ! docker info &> /dev/null; then
-        log_error "Docker daemon is not running"
-        exit 1
-    fi
+# Copy configuration files
+cp src/main/resources/application.yml deploy/conf/
+cp src/main/resources/mcp-config.json deploy/conf/
 
-    log_info "Dependencies check passed"
-}
+# Copy scripts
+cp scripts/*.sh deploy/bin/
+cp scripts/*.bat deploy/bin/
 
-# Build Docker image
-build_image() {
-    log_info "Building Docker image..."
+# Make scripts executable
+chmod +x deploy/bin/*.sh
 
-    if [ ! -f "docker/Dockerfile" ]; then
-        log_error "Dockerfile not found"
-        exit 1
-    fi
+# Create systemd service file
+cat > deploy/bin/mcp-server.service << EOF
+[Unit]
+Description=MCP Server
+After=network.target
 
-    docker build -f docker/Dockerfile -t "$DOCKER_IMAGE:$DOCKER_TAG" .
+[Service]
+Type=simple
+User=mcp
+Group=mcp
+WorkingDirectory=/opt/mcp-server
+ExecStart=/opt/mcp-server/bin/start-server.sh
+ExecStop=/opt/mcp-server/bin/stop-server.sh
+Restart=always
+RestartSec=5
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+Environment=SERVER_PORT=8080
 
-    if [ $? -eq 0 ]; then
-        log_info "Docker image built successfully"
-    else
-        log_error "Failed to build Docker image"
-        exit 1
-    fi
-}
+[Install]
+WantedBy=multi-user.target
+EOF
 
-# Deploy with Docker Compose
-deploy_compose() {
-    log_info "Deploying with Docker Compose..."
+# Create Docker files
+cat > deploy/Dockerfile << EOF
+FROM eclipse-temurin:21-jre
 
-    if [ ! -f "$COMPOSE_FILE" ]; then
-        log_error "Docker Compose file not found: $COMPOSE_FILE"
-        exit 1
-    fi
+LABEL maintainer="MCP Server Team"
+LABEL description="Model Context Protocol Server"
 
-    # Create necessary directories
-    mkdir -p logs mcp-files/samples
+# Create app directory
+WORKDIR /app
 
-    # Start services
-    if command -v docker-compose &> /dev/null; then
-        docker-compose -f "$COMPOSE_FILE" up -d
-    else
-        docker compose -f "$COMPOSE_FILE" up -d
-    fi
+# Create non-root user
+RUN groupadd -r mcpserver && useradd -r -g mcpserver mcpserver
 
-    if [ $? -eq 0 ]; then
-        log_info "Services deployed successfully"
-    else
-        log_error "Failed to deploy services"
-        exit 1
-    fi
-}
+# Copy application files
+COPY bin/mcp-server-*.jar app.jar
+COPY conf/ conf/
 
-# Deploy standalone container
-deploy_standalone() {
-    log_info "Deploying standalone container..."
+# Create directories
+RUN mkdir -p logs data && chown -R mcpserver:mcpserver /app
 
-    # Stop and remove existing container
-    docker stop mcp-java-server 2>/dev/null || true
-    docker rm mcp-java-server 2>/dev/null || true
+# Switch to non-root user
+USER mcpserver
 
-    # Create necessary directories
-    mkdir -p logs mcp-files/samples
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/mcp/health || exit 1
 
-    # Run container
-    docker run -d \
-        --name mcp-java-server \
-        --restart unless-stopped \
-        -v "$(pwd)/logs:/app/logs" \
-        -v "$(pwd)/mcp-files:/app/mcp-files" \
-        -e JAVA_OPTS="-Xmx512m -Xms256m" \
-        "$DOCKER_IMAGE:$DOCKER_TAG"
+# Expose port
+EXPOSE 8080
 
-    if [ $? -eq 0 ]; then
-        log_info "Container deployed successfully"
-    else
-        log_error "Failed to deploy container"
-        exit 1
-    fi
-}
+# Start application
+CMD ["java", "-Xms512m", "-Xmx2g", "-XX:+UseG1GC", "-XX:+EnablePreview", "-jar", "app.jar"]
+EOF
 
-# Show deployment status
-show_status() {
-    log_info "Deployment Status"
-    log_info "=================="
+cat > deploy/docker-compose.yml << EOF
+version: '3.8'
 
-    echo
-    log_info "Docker Images:"
-    docker images | grep mcp-java-server || log_warn "No MCP images found"
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - SERVER_PORT=8080
+      - SPRING_PROFILES_ACTIVE=prod
+      - MCP_LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/mcp/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+EOF
 
-    echo
-    log_info "Running Containers:"
-    docker ps | grep mcp || log_warn "No MCP containers running"
-
-    echo
-    log_info "Container Logs (last 10 lines):"
-    docker logs --tail 10 mcp-java-server 2>/dev/null || log_warn "No logs available"
-}
-
-# Clean up deployment
-cleanup() {
-    log_info "Cleaning up deployment..."
-
-    # Stop and remove containers
-    if command -v docker-compose &> /dev/null; then
-        docker-compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-    else
-        docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-    fi
-
-    docker stop mcp-java-server 2>/dev/null || true
-    docker rm mcp-java-server 2>/dev/null || true
-
-    # Remove images
-    docker rmi "$DOCKER_IMAGE:$DOCKER_TAG" 2>/dev/null || true
-
-    log_info "Cleanup completed"
-}
-
-# Show help
-show_help() {
-    echo "MCP Java Server Deployment Script"
-    echo "=================================="
-    echo
-    echo "Usage: $0 [COMMAND]"
-    echo
-    echo "Commands:"
-    echo "  build              - Build Docker image only"
-    echo "  deploy-compose     - Build and deploy with Docker Compose"
-    echo "  deploy-standalone  - Build and deploy standalone container"
-    echo "  status             - Show deployment status"
-    echo "  cleanup            - Clean up all containers and images"
-    echo "  help               - Show this help message"
-    echo
-    echo "Examples:"
-    echo "  $0 deploy-compose     # Full deployment with Docker Compose"
-    echo "  $0 deploy-standalone  # Simple standalone deployment"
-    echo "  $0 status            # Check deployment status"
-    echo "  $0 cleanup           # Remove all containers and images"
-}
-
-# Main execution
-main() {
-    local command="${1:-deploy-compose}"
-
-    case "$command" in
-        build)
-            check_dependencies
-            build_image
-            ;;
-        deploy-compose)
-            check_dependencies
-            build_image
-            deploy_compose
-            show_status
-            ;;
-        deploy-standalone)
-            check_dependencies
-            build_image
-            deploy_standalone
-            show_status
-            ;;
-        status)
-            show_status
-            ;;
-        cleanup)
-            cleanup
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            log_error "Unknown command: $command"
-            show_help
-            exit 1
-            ;;
-    esac
-}
-
-# Execute main function
-main "$@"
+echo "Deployment package created in 'deploy' directory"
+echo ""
+echo "Deployment files:"
+echo "- deploy/bin/mcp-server-*.jar       - Application JAR"
+echo "- deploy/bin/start-server.sh        - Start script (Linux)"
+echo "- deploy/bin/start-server.bat       - Start script (Windows)"
+echo "- deploy/bin/stop-server.sh         - Stop script"
+echo "- deploy/bin/mcp-server.service     - Systemd service file"
+echo "- deploy/conf/application.yml       - Configuration file"
+echo "- deploy/conf/mcp-config.json       - MCP configuration"
+echo "- deploy/Dockerfile                 - Docker image"
+echo "- deploy/docker-compose.yml         - Docker Compose"
+echo ""
+echo "To deploy:"
+echo "1. Copy 'deploy' directory to target server"
+echo "2. Run './bin/start-server.sh' or use Docker"
+echo "3. Access server at http://localhost:8080/mcp"

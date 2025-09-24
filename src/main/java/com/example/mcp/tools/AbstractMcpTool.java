@@ -1,62 +1,89 @@
 package com.example.mcp.tools;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import reactor.core.publisher.Mono;
 
-import java.util.List;
-import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 public abstract class AbstractMcpTool implements McpTool {
 
     protected final Logger logger = LoggerFactory.getLogger(getClass());
-
-    protected final String name;
-    protected final String description;
-    protected final Map<String, Object> inputSchema;
-
-    public AbstractMcpTool(String name, String description, Map<String, Object> inputSchema) {
-        this.name = name;
-        this.description = description;
-        this.inputSchema = inputSchema;
-    }
+    protected final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
-    public String getName() {
-        return name;
+    public CompletableFuture<Object> execute(JsonNode parameters) {
+        logger.debug("Executing tool: {} with parameters: {}", getName(), parameters);
+
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                validateParameters(parameters);
+                Object result = doExecute(parameters);
+                logger.debug("Tool {} executed successfully", getName());
+                return result;
+            } catch (Exception e) {
+                logger.error("Error executing tool {}: {}", getName(), e.getMessage(), e);
+                throw new RuntimeException("Tool execution failed: " + e.getMessage(), e);
+            }
+        });
     }
 
-    @Override
-    public String getDescription() {
-        return description;
+    protected abstract Object doExecute(JsonNode parameters) throws Exception;
+
+    protected void validateParameters(JsonNode parameters) throws Exception {
+        if (parameters == null || parameters.isNull()) {
+            throw new IllegalArgumentException("Parameters cannot be null");
+        }
     }
 
-    @Override
-    public Map<String, Object> getInputSchema() {
-        return inputSchema;
+    protected String getStringParameter(JsonNode parameters, String key) {
+        return getStringParameter(parameters, key, null);
     }
 
-    @Override
-    public Mono<List<Map<String, Object>>> execute(Map<String, Object> arguments) {
-        logger.debug("Executing tool '{}' with arguments: {}", name, arguments);
-
-        return validateArguments(arguments)
-            .then(doExecute(arguments))
-            .doOnSuccess(result -> logger.debug("Tool '{}' execution completed successfully", name))
-            .doOnError(error -> logger.error("Tool '{}' execution failed", name, error));
+    protected String getStringParameter(JsonNode parameters, String key, String defaultValue) {
+        if (parameters.has(key) && !parameters.get(key).isNull()) {
+            return parameters.get(key).asText();
+        }
+        return defaultValue;
     }
 
-    protected Mono<Void> validateArguments(Map<String, Object> arguments) {
-        return Mono.empty();
+    protected int getIntParameter(JsonNode parameters, String key) {
+        return getIntParameter(parameters, key, 0);
     }
 
-    protected abstract Mono<List<Map<String, Object>>> doExecute(Map<String, Object> arguments);
-
-    protected Map<String, Object> createTextContent(String text) {
-        return Map.of("type", "text", "text", text);
+    protected int getIntParameter(JsonNode parameters, String key, int defaultValue) {
+        if (parameters.has(key) && !parameters.get(key).isNull()) {
+            return parameters.get(key).asInt();
+        }
+        return defaultValue;
     }
 
-    protected Map<String, Object> createErrorContent(String error) {
-        return Map.of("type", "text", "text", "Error: " + error);
+    protected double getDoubleParameter(JsonNode parameters, String key) {
+        return getDoubleParameter(parameters, key, 0.0);
+    }
+
+    protected double getDoubleParameter(JsonNode parameters, String key, double defaultValue) {
+        if (parameters.has(key) && !parameters.get(key).isNull()) {
+            return parameters.get(key).asDouble();
+        }
+        return defaultValue;
+    }
+
+    protected boolean getBooleanParameter(JsonNode parameters, String key) {
+        return getBooleanParameter(parameters, key, false);
+    }
+
+    protected boolean getBooleanParameter(JsonNode parameters, String key, boolean defaultValue) {
+        if (parameters.has(key) && !parameters.get(key).isNull()) {
+            return parameters.get(key).asBoolean();
+        }
+        return defaultValue;
+    }
+
+    protected void requireParameter(JsonNode parameters, String key) throws IllegalArgumentException {
+        if (!parameters.has(key) || parameters.get(key).isNull()) {
+            throw new IllegalArgumentException("Required parameter '" + key + "' is missing");
+        }
     }
 }

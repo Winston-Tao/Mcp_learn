@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:spec.modelcontextprotocol.io)",
+      "WebSearch",
+      "WebFetch(domain:portkey.ai)",
+      "WebFetch(domain:simplescraper.io)",
+      "Bash(chmod:*)",
+      "WebFetch(domain:support.claude.com)",
+      "Bash(tree:*)",
+      "Bash(mvn:*)",
+      "Bash(jar:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,87 +1,49 @@
 {
-  "server": {
-    "name": "mcp-java-server",
-    "version": "1.0.0",
-    "description": "MCP Java Server Implementation for Learning",
-    "author": "MCP Learning Project",
-    "homepage": "https://github.com/example/mcp-java-server"
-  },
-  "transport": {
-    "type": "STDIO",
-    "description": "Standard Input/Output transport for MCP communication"
-  },
+  "name": "Java MCP Server",
+  "version": "1.0.0",
+  "description": "MCP Server implementation in Java using Spring Boot",
+  "protocol_version": "2025-06-18",
   "capabilities": {
-    "tools": {
-      "enabled": true,
-      "description": "Provides mathematical calculations, file operations, and weather information"
-    },
-    "resources": {
-      "enabled": true,
-      "description": "Provides access to file system and configuration resources"
-    },
-    "prompts": {
-      "enabled": true,
-      "description": "Provides template prompts for various use cases"
-    },
-    "logging": {
-      "enabled": true,
-      "description": "Supports structured logging and notifications"
-    }
+    "tools": true,
+    "resources": true,
+    "prompts": true,
+    "sampling": false,
+    "roots": false
   },
-  "security": {
-    "fileAccess": {
-      "basePath": "~/mcp-files",
-      "allowedExtensions": [".txt", ".json", ".xml", ".md", ".csv"],
-      "maxFileSize": "10MB"
+  "tools": [
+    {
+      "name": "calculator",
+      "description": "Perform mathematical calculations"
     },
-    "resourceLimits": {
-      "maxConcurrentRequests": 10,
-      "requestTimeout": "30s"
+    {
+      "name": "weather",
+      "description": "Get weather information for a location"
+    },
+    {
+      "name": "file_operation",
+      "description": "Perform file operations like read, write, list"
     }
-  },
-  "examples": {
-    "tools": [
-      {
-        "name": "calculator",
-        "example": {
-          "operation": "add",
-          "a": 5,
-          "b": 3
-        }
-      },
-      {
-        "name": "file_operations",
-        "example": {
-          "action": "read",
-          "path": "samples/sample.txt"
-        }
-      },
-      {
-        "name": "weather",
-        "example": {
-          "location": "New York",
-          "units": "celsius"
-        }
-      }
-    ],
-    "resources": [
-      {
-        "uri": "file://samples/sample.txt",
-        "description": "Sample text file"
-      },
-      {
-        "uri": "config://server",
-        "description": "Server configuration"
-      }
-    ],
-    "prompts": [
-      {
-        "name": "code_review",
-        "example": {
-          "code": "function add(a, b) { return a + b; }",
-          "language": "javascript"
-        }
-      }
-    ]
-  }
+  ],
+  "resources": [
+    {
+      "uri": "file://config",
+      "name": "Server Configuration",
+      "description": "Server configuration files"
+    },
+    {
+      "uri": "file://logs",
+      "name": "Server Logs",
+      "description": "Server log files"
+    }
+  ],
+  "prompts": [
+    {
+      "name": "code_review",
+      "description": "Template for code review tasks"
+    },
+    {
+      "name": "documentation",
+      "description": "Template for documentation generation"
+    }
+  ]
 }

@@ -1,188 +1,143 @@
 package com.example.mcp.transport;
 
-import com.example.mcp.config.ServerConfig;
+import com.example.mcp.server.McpError;
 import com.example.mcp.server.McpMessage;
-import com.example.mcp.server.McpServerImpl;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.LinkedBlockingQueue;
 
 @Component
-public class StdioTransportProvider implements CommandLineRunner {
+public class StdioTransportProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(StdioTransportProvider.class);
 
-    private final McpServerImpl mcpServer;
     private final ObjectMapper objectMapper;
-    private final ServerConfig serverConfig;
+    private final BlockingQueue<String> inputQueue;
+    private final BlockingQueue<String> outputQueue;
+    private volatile boolean running = false;
 
     @Autowired
-    public StdioTransportProvider(McpServerImpl mcpServer, ObjectMapper objectMapper, ServerConfig serverConfig) {
-        this.mcpServer = mcpServer;
+    public StdioTransportProvider(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
-        this.serverConfig = serverConfig;
+        this.inputQueue = new LinkedBlockingQueue<>();
+        this.outputQueue = new LinkedBlockingQueue<>();
+
+        logger.info("STDIO Transport Provider initialized");
     }
 
-    @Override
-    public void run(String... args) throws Exception {
-        if (serverConfig.getTransport().getType() != ServerConfig.Transport.Type.STDIO) {
-            logger.info("STDIO transport disabled, using {} transport", serverConfig.getTransport().getType());
+    public void start() {
+        if (running) {
+            logger.warn("STDIO transport is already running");
             return;
         }
 
-        logger.info("Starting STDIO transport provider...");
+        running = true;
+        logger.info("Starting STDIO transport...");
 
-        // Check if we're running in an interactive environment
-        boolean isInteractive = System.console() != null || isStdinAvailable();
+        CompletableFuture.runAsync(this::handleInput);
+        CompletableFuture.runAsync(this::handleOutput);
 
-        if (!isInteractive) {
-            logger.info("Running in non-interactive mode (background/daemon)");
-            logger.info("MCP Server is ready and waiting for connections");
-
-            // Keep the server alive for background execution
-            keepServerAlive();
-        } else {
-            logger.info("Running in interactive mode, reading from STDIN");
-            runInteractiveMode();
-        }
-
-        logger.info("STDIO transport provider stopped");
+        logger.info("STDIO transport started");
     }
 
-    private boolean isStdinAvailable() {
+    public void stop() {
+        if (!running) {
+            return;
+        }
+
+        running = false;
+        logger.info("STDIO transport stopped");
+    }
+
+    public void sendMessage(McpMessage message) {
+        if (!running) {
+            logger.warn("Cannot send message - STDIO transport is not running");
+            return;
+        }
+
         try {
-            // Check if we have an actual console
-            if (System.console() != null) {
-                return true;
-            }
-
-            // Check if STDIN is redirected/closed
-            // In background mode, System.in.available() typically returns 0
-            // and attempting to read will immediately return null
-            return System.in.available() > 0;
+            String json = objectMapper.writeValueAsString(message);
+            outputQueue.offer(json);
+            logger.debug("Message queued for output: {}", message.getId());
         } catch (Exception e) {
-            return false;
+            logger.error("Error serializing message: {}", e.getMessage(), e);
         }
     }
 
-    private void runInteractiveMode() throws Exception {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-             PrintWriter writer = new PrintWriter(System.out)) {
-
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.trim().isEmpty()) {
-                    continue;
-                }
-
-                final String currentLine = line;
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        processMessage(currentLine, writer);
-                    } catch (Exception e) {
-                        logger.error("Error processing message: {}", currentLine, e);
-                    }
-                });
-            }
-        } catch (Exception e) {
-            logger.error("Error in STDIO transport", e);
-        }
-    }
-
-    private void keepServerAlive() {
-        try {
-            logger.info("Server is running in background mode");
-            logger.info("To connect to this server, use MCP client tools");
-            logger.info("Server will continue running until explicitly stopped");
-
-            // Create a shutdown hook to handle graceful shutdown
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                logger.info("Received shutdown signal, stopping MCP server...");
-            }));
-
-            // Keep the server alive
-            Object lock = new Object();
-            synchronized (lock) {
-                lock.wait(); // Wait indefinitely until interrupted
-            }
-        } catch (InterruptedException e) {
-            logger.info("Server interrupted, shutting down gracefully");
-            Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            logger.error("Error keeping server alive", e);
-        }
-    }
-
-    private void processMessage(String line, PrintWriter writer) {
-        try {
-            logger.debug("Received: {}", line);
-
-            McpMessage request = objectMapper.readValue(line, McpMessage.class);
-
-            mcpServer.handleMessage(request)
-                .subscribe(
-                    response -> {
-                        if (response != null) {
-                            try {
-                                String responseJson = objectMapper.writeValueAsString(response);
-                                logger.debug("Sending: {}", responseJson);
-
-                                synchronized (writer) {
-                                    writer.println(responseJson);
-                                    writer.flush();
-                                }
-                            } catch (Exception e) {
-                                logger.error("Error serializing response", e);
-                            }
-                        }
-                    },
-                    error -> {
-                        logger.error("Error handling message", error);
-
-                        try {
-                            McpMessage errorResponse = McpMessage.error(
-                                request.getId(),
-                                com.example.mcp.server.McpError.internalError(error.getMessage())
-                            );
-
-                            String errorJson = objectMapper.writeValueAsString(errorResponse);
-
-                            synchronized (writer) {
-                                writer.println(errorJson);
-                                writer.flush();
-                            }
-                        } catch (Exception e) {
-                            logger.error("Error sending error response", e);
-                        }
-                    }
-                );
-
-        } catch (Exception e) {
-            logger.error("Error parsing message: {}", line, e);
-
+    public CompletableFuture<McpMessage> receiveMessage() {
+        return CompletableFuture.supplyAsync(() -> {
             try {
-                McpMessage errorResponse = McpMessage.error(
-                    null,
-                    com.example.mcp.server.McpError.parseError()
-                );
+                String json = inputQueue.take();
+                JsonNode jsonNode = objectMapper.readTree(json);
+                return objectMapper.treeToValue(jsonNode, McpMessage.class);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.debug("Message receive interrupted");
+                return null;
+            } catch (Exception e) {
+                logger.error("Error deserializing message: {}", e.getMessage(), e);
+                return McpMessage.createErrorResponse(null,
+                    McpError.parseError("Failed to parse JSON-RPC message"));
+            }
+        });
+    }
 
-                String errorJson = objectMapper.writeValueAsString(errorResponse);
+    private void handleInput() {
+        logger.debug("Starting STDIO input handler");
 
-                synchronized (writer) {
-                    writer.println(errorJson);
-                    writer.flush();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+            String line;
+            while (running && (line = reader.readLine()) != null) {
+                if (!line.trim().isEmpty()) {
+                    inputQueue.offer(line);
+                    logger.debug("Message received from STDIN");
                 }
-            } catch (Exception ex) {
-                logger.error("Error sending parse error response", ex);
+            }
+        } catch (IOException e) {
+            if (running) {
+                logger.error("Error reading from STDIN: {}", e.getMessage(), e);
             }
         }
+
+        logger.debug("STDIO input handler stopped");
+    }
+
+    private void handleOutput() {
+        logger.debug("Starting STDIO output handler");
+
+        try (PrintWriter writer = new PrintWriter(System.out, true)) {
+            while (running) {
+                try {
+                    String message = outputQueue.take();
+                    writer.println(message);
+                    writer.flush();
+                    logger.debug("Message sent to STDOUT");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            if (running) {
+                logger.error("Error writing to STDOUT: {}", e.getMessage(), e);
+            }
+        }
+
+        logger.debug("STDIO output handler stopped");
+    }
+
+    public boolean isRunning() {
+        return running;
     }
 }

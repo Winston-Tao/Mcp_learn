@@ -1,186 +1,427 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>MCP HTTP+SSE Client Test</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Server Test Client</title>
     <style>
-        body { font-family: monospace; margin: 20px; }
-        .container { max-width: 800px; }
-        .log { background: #f5f5f5; padding: 10px; height: 400px; overflow-y: auto; border: 1px solid #ccc; }
-        .controls { margin: 20px 0; }
-        button { margin: 5px; padding: 10px; }
-        input { width: 300px; padding: 5px; }
-        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
-        .connected { background: #d4edda; color: #155724; }
-        .disconnected { background: #f8d7da; color: #721c24; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #005999;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .response {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .error {
+            background: #fee;
+            border-color: #fcc;
+            color: #c00;
+        }
+        .success {
+            background: #efe;
+            border-color: #cfc;
+            color: #060;
+        }
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .tab.active {
+            border-bottom-color: #007acc;
+            color: #007acc;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
+    <h1>MCP Server Test Client</h1>
+    <p>Test your MCP Server implementation with this interactive client.</p>
+
     <div class="container">
-        <h1>MCP HTTP+SSE Client Test</h1>
+        <div class="form-group">
+            <label for="serverUrl">Server URL:</label>
+            <input type="text" id="serverUrl" value="http://localhost:8080/mcp/api/mcp" placeholder="http://localhost:8080/mcp/api/mcp">
+        </div>
+    </div>
 
-        <div class="controls">
-            <input type="text" id="serverUrl" value="http://localhost:18060" placeholder="Server URL">
-            <button onclick="connect()">Connect</button>
-            <button onclick="disconnect()">Disconnect</button>
-            <button onclick="clearLog()">Clear Log</button>
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('initialize')">Initialize</button>
+            <button class="tab" onclick="switchTab('tools')">Tools</button>
+            <button class="tab" onclick="switchTab('resources')">Resources</button>
+            <button class="tab" onclick="switchTab('prompts')">Prompts</button>
+            <button class="tab" onclick="switchTab('logging')">Logging</button>
+            <button class="tab" onclick="switchTab('custom')">Custom</button>
         </div>
 
-        <div id="status" class="status disconnected">Disconnected</div>
-
-        <div class="controls">
+        <!-- Initialize Tab -->
+        <div id="initialize" class="tab-content active">
+            <h3>Initialize Server</h3>
+            <p>Send an initialize request to establish connection with the MCP Server.</p>
             <button onclick="sendInitialize()">Send Initialize</button>
-            <button onclick="sendInitialized()">Send Initialized</button>
-            <button onclick="sendToolsList()">List Tools</button>
-            <button onclick="sendResourcesList()">List Resources</button>
+            <div id="initResponse" class="response" style="display:none;"></div>
         </div>
 
-        <div id="log" class="log"></div>
+        <!-- Tools Tab -->
+        <div id="tools" class="tab-content">
+            <h3>Tools</h3>
+            <div class="form-group">
+                <label>Action:</label>
+                <select id="toolAction">
+                    <option value="list">List Tools</option>
+                    <option value="call">Call Tool</option>
+                </select>
+            </div>
+            <div id="toolCallParams" style="display:none;">
+                <div class="form-group">
+                    <label for="toolName">Tool Name:</label>
+                    <select id="toolName">
+                        <option value="calculator">Calculator</option>
+                        <option value="weather">Weather</option>
+                        <option value="file_operation">File Operation</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="toolParams">Parameters (JSON):</label>
+                    <textarea id="toolParams" rows="4" placeholder='{"operation": "add", "a": 5, "b": 3}'></textarea>
+                </div>
+            </div>
+            <button onclick="sendToolRequest()">Send Request</button>
+            <div id="toolResponse" class="response" style="display:none;"></div>
+        </div>
+
+        <!-- Resources Tab -->
+        <div id="resources" class="tab-content">
+            <h3>Resources</h3>
+            <div class="form-group">
+                <label>Action:</label>
+                <select id="resourceAction">
+                    <option value="list">List Resources</option>
+                    <option value="read">Read Resource</option>
+                </select>
+            </div>
+            <div id="resourceReadParams" style="display:none;">
+                <div class="form-group">
+                    <label for="resourceUri">Resource URI:</label>
+                    <select id="resourceUri">
+                        <option value="file://data">File Resources</option>
+                        <option value="config://server">Server Config</option>
+                    </select>
+                </div>
+            </div>
+            <button onclick="sendResourceRequest()">Send Request</button>
+            <div id="resourceResponse" class="response" style="display:none;"></div>
+        </div>
+
+        <!-- Prompts Tab -->
+        <div id="prompts" class="tab-content">
+            <h3>Prompts</h3>
+            <div class="form-group">
+                <label>Action:</label>
+                <select id="promptAction">
+                    <option value="list">List Prompts</option>
+                    <option value="get">Get Prompt</option>
+                </select>
+            </div>
+            <div id="promptGetParams" style="display:none;">
+                <div class="form-group">
+                    <label for="promptName">Prompt Name:</label>
+                    <input type="text" id="promptName" value="code_review">
+                </div>
+                <div class="form-group">
+                    <label for="promptArgs">Arguments (JSON):</label>
+                    <textarea id="promptArgs" rows="4" placeholder='{"language": "java", "focus_areas": ["security", "performance"]}'></textarea>
+                </div>
+            </div>
+            <button onclick="sendPromptRequest()">Send Request</button>
+            <div id="promptResponse" class="response" style="display:none;"></div>
+        </div>
+
+        <!-- Logging Tab -->
+        <div id="logging" class="tab-content">
+            <h3>Logging</h3>
+            <p>Test the logging capabilities of the MCP Server.</p>
+            <div class="form-group">
+                <label for="logLevel">Log Level:</label>
+                <select id="logLevel">
+                    <option value="TRACE">TRACE</option>
+                    <option value="DEBUG">DEBUG</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="WARN">WARN</option>
+                    <option value="ERROR">ERROR</option>
+                </select>
+            </div>
+            <button onclick="sendLoggingSetLevel()">Set Log Level</button>
+            <div id="loggingResponse" class="response" style="display:none;"></div>
+        </div>
+
+        <!-- Custom Tab -->
+        <div id="custom" class="tab-content">
+            <h3>Custom Request</h3>
+            <div class="form-group">
+                <label for="customMethod">Method:</label>
+                <input type="text" id="customMethod" placeholder="ping">
+            </div>
+            <div class="form-group">
+                <label for="customParams">Parameters (JSON):</label>
+                <textarea id="customParams" rows="6" placeholder='{}'></textarea>
+            </div>
+            <button onclick="sendCustomRequest()">Send Request</button>
+            <div id="customResponse" class="response" style="display:none;"></div>
+        </div>
     </div>
 
     <script>
-        let eventSource = null;
-        let endpointUri = null;
-        let serverBaseUrl = '';
+        let requestId = 1;
 
-        function log(message, type = 'info') {
-            const logDiv = document.getElementById('log');
-            const timestamp = new Date().toISOString().substr(11, 12);
-            const color = type === 'error' ? 'red' : type === 'sent' ? 'blue' : type === 'received' ? 'green' : 'black';
-            logDiv.innerHTML += `<div style="color: ${color};">[${timestamp}] ${message}</div>`;
-            logDiv.scrollTop = logDiv.scrollHeight;
-        }
-
-        function updateStatus(connected) {
-            const statusDiv = document.getElementById('status');
-            if (connected) {
-                statusDiv.className = 'status connected';
-                statusDiv.textContent = 'Connected';
-            } else {
-                statusDiv.className = 'status disconnected';
-                statusDiv.textContent = 'Disconnected';
-            }
-        }
-
-        function connect() {
-            serverBaseUrl = document.getElementById('serverUrl').value;
-            const sseUrl = `${serverBaseUrl}/mcp/sse`;
-
-            log(`Connecting to ${sseUrl}...`);
-
-            eventSource = new EventSource(sseUrl);
-
-            eventSource.onopen = function(event) {
-                log('SSE connection opened', 'info');
-                updateStatus(true);
-            };
-
-            eventSource.onmessage = function(event) {
-                log(`SSE message: ${event.data}`, 'received');
-            };
-
-            eventSource.addEventListener('endpoint', function(event) {
-                const data = JSON.parse(event.data);
-                endpointUri = data.uri;
-                log(`Received endpoint: ${endpointUri}`, 'received');
+        function switchTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
             });
 
-            eventSource.addEventListener('message', function(event) {
-                log(`MCP Response: ${event.data}`, 'received');
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
             });
 
-            eventSource.onerror = function(event) {
-                log('SSE connection error', 'error');
-                updateStatus(false);
-            };
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
 
-            eventSource.onclose = function(event) {
-                log('SSE connection closed', 'error');
-                updateStatus(false);
-            };
+            // Add active class to clicked tab
+            event.target.classList.add('active');
         }
 
-        function disconnect() {
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
-                endpointUri = null;
-                updateStatus(false);
-                log('Disconnected');
+        // Event listeners for dynamic form fields
+        document.getElementById('toolAction').addEventListener('change', function() {
+            const callParams = document.getElementById('toolCallParams');
+            callParams.style.display = this.value === 'call' ? 'block' : 'none';
+        });
+
+        document.getElementById('resourceAction').addEventListener('change', function() {
+            const readParams = document.getElementById('resourceReadParams');
+            readParams.style.display = this.value === 'read' ? 'block' : 'none';
+        });
+
+        document.getElementById('promptAction').addEventListener('change', function() {
+            const getParams = document.getElementById('promptGetParams');
+            getParams.style.display = this.value === 'get' ? 'block' : 'none';
+        });
+
+        async function sendRequest(method, params = null, responseElementId) {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const responseElement = document.getElementById(responseElementId);
+
+            const payload = {
+                jsonrpc: "2.0",
+                id: requestId++,
+                method: method
+            };
+
+            if (params) {
+                payload.params = params;
             }
-        }
 
-        function sendMessage(message) {
-            if (!endpointUri) {
-                log('No endpoint URI available. Connect first.', 'error');
-                return;
+            responseElement.style.display = 'block';
+            responseElement.className = 'response';
+            responseElement.textContent = 'Sending request...';
+
+            try {
+                const response = await fetch(serverUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+                responseElement.className = 'response success';
+                responseElement.textContent = JSON.stringify(result, null, 2);
+
+            } catch (error) {
+                responseElement.className = 'response error';
+                responseElement.textContent = 'Error: ' + error.message;
             }
-
-            const url = `${serverBaseUrl}${endpointUri}`;
-            log(`Sending to ${url}: ${JSON.stringify(message, null, 2)}`, 'sent');
-
-            fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-MCP-Connection-ID': 'web-client-test'
-                },
-                body: JSON.stringify(message)
-            })
-            .then(response => response.json())
-            .then(data => {
-                log(`HTTP Response: ${JSON.stringify(data, null, 2)}`, 'received');
-            })
-            .catch(error => {
-                log(`HTTP Error: ${error.message}`, 'error');
-            });
         }
 
         function sendInitialize() {
-            sendMessage({
-                jsonrpc: "2.0",
-                method: "initialize",
-                params: {
-                    protocolVersion: "2025-06-18",
-                    capabilities: {
-                        roots: { listChanged: false }
-                    },
-                    clientInfo: {
-                        name: "test-client",
-                        version: "1.0.0"
-                    }
-                },
-                id: 1
-            });
+            sendRequest('initialize', {
+                protocolVersion: '2025-06-18',
+                capabilities: {},
+                clientInfo: {
+                    name: 'MCP Test Client',
+                    version: '1.0.0'
+                }
+            }, 'initResponse');
         }
 
-        function sendInitialized() {
-            sendMessage({
-                jsonrpc: "2.0",
-                method: "notifications/initialized",
-                params: {}
-            });
+        function sendToolRequest() {
+            const action = document.getElementById('toolAction').value;
+            let method, params = null;
+
+            if (action === 'list') {
+                method = 'tools/list';
+            } else {
+                method = 'tools/call';
+                const toolName = document.getElementById('toolName').value;
+                const toolParamsText = document.getElementById('toolParams').value;
+
+                try {
+                    const toolParams = toolParamsText ? JSON.parse(toolParamsText) : {};
+                    params = {
+                        name: toolName,
+                        arguments: toolParams
+                    };
+                } catch (e) {
+                    document.getElementById('toolResponse').className = 'response error';
+                    document.getElementById('toolResponse').textContent = 'Invalid JSON parameters: ' + e.message;
+                    document.getElementById('toolResponse').style.display = 'block';
+                    return;
+                }
+            }
+
+            sendRequest(method, params, 'toolResponse');
         }
 
-        function sendToolsList() {
-            sendMessage({
-                jsonrpc: "2.0",
-                method: "tools/list",
-                params: {},
-                id: 2
-            });
+        function sendResourceRequest() {
+            const action = document.getElementById('resourceAction').value;
+            let method, params = null;
+
+            if (action === 'list') {
+                method = 'resources/list';
+            } else {
+                method = 'resources/read';
+                const resourceUri = document.getElementById('resourceUri').value;
+                params = { uri: resourceUri };
+            }
+
+            sendRequest(method, params, 'resourceResponse');
         }
 
-        function sendResourcesList() {
-            sendMessage({
-                jsonrpc: "2.0",
-                method: "resources/list",
-                params: {},
-                id: 3
-            });
+        function sendPromptRequest() {
+            const action = document.getElementById('promptAction').value;
+            let method, params = null;
+
+            if (action === 'list') {
+                method = 'prompts/list';
+            } else {
+                method = 'prompts/get';
+                const promptName = document.getElementById('promptName').value;
+                const promptArgsText = document.getElementById('promptArgs').value;
+
+                try {
+                    const promptArgs = promptArgsText ? JSON.parse(promptArgsText) : {};
+                    params = {
+                        name: promptName,
+                        arguments: promptArgs
+                    };
+                } catch (e) {
+                    document.getElementById('promptResponse').className = 'response error';
+                    document.getElementById('promptResponse').textContent = 'Invalid JSON arguments: ' + e.message;
+                    document.getElementById('promptResponse').style.display = 'block';
+                    return;
+                }
+            }
+
+            sendRequest(method, params, 'promptResponse');
         }
 
-        function clearLog() {
-            document.getElementById('log').innerHTML = '';
+        function sendCustomRequest() {
+            const method = document.getElementById('customMethod').value;
+            const paramsText = document.getElementById('customParams').value;
+
+            if (!method.trim()) {
+                document.getElementById('customResponse').className = 'response error';
+                document.getElementById('customResponse').textContent = 'Method is required';
+                document.getElementById('customResponse').style.display = 'block';
+                return;
+            }
+
+            let params = null;
+            if (paramsText.trim()) {
+                try {
+                    params = JSON.parse(paramsText);
+                } catch (e) {
+                    document.getElementById('customResponse').className = 'response error';
+                    document.getElementById('customResponse').textContent = 'Invalid JSON parameters: ' + e.message;
+                    document.getElementById('customResponse').style.display = 'block';
+                    return;
+                }
+            }
+
+            sendRequest(method, params, 'customResponse');
+        }
+
+        function sendLoggingSetLevel() {
+            const level = document.getElementById('logLevel').value;
+            const params = { level: level };
+
+            sendRequest('logging/setLevel', params, 'loggingResponse');
         }
     </script>
 </body>

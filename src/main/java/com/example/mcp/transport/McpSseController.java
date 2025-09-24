@@ -1,167 +1,172 @@
 package com.example.mcp.transport;
 
 import com.example.mcp.server.McpMessage;
-import com.example.mcp.server.McpServerImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.time.Duration;
-import java.util.Map;
+import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @RestController
-@RequestMapping("/mcp")
+@RequestMapping("${mcp.transport.http.endpoint:/api/mcp}")
 public class McpSseController {
 
     private static final Logger logger = LoggerFactory.getLogger(McpSseController.class);
 
-    private final McpServerImpl mcpServer;
     private final ObjectMapper objectMapper;
-    private final Map<String, Sinks.Many<String>> connections = new ConcurrentHashMap<>();
-    private final AtomicLong connectionIdCounter = new AtomicLong(1);
+    private final ConcurrentHashMap<String, SseEmitter> activeConnections;
+    private final ScheduledExecutorService scheduler;
 
     @Autowired
-    public McpSseController(McpServerImpl mcpServer, ObjectMapper objectMapper) {
-        this.mcpServer = mcpServer;
+    public McpSseController(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+        this.activeConnections = new ConcurrentHashMap<>();
+        this.scheduler = Executors.newScheduledThreadPool(2);
+
+        startHeartbeat();
+        logger.info("MCP SSE Controller initialized");
     }
 
-    /**
-     * Establish SSE connection and return endpoint information
-     */
-    @GetMapping(path = "/sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> establishConnection() {
-        String connectionId = "mcp-" + connectionIdCounter.getAndIncrement();
-        Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
+    @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter subscribeToEvents(@RequestParam(required = false) String clientId) {
+        if (clientId == null) {
+            clientId = "client-" + System.currentTimeMillis();
+        }
 
-        connections.put(connectionId, sink);
-        logger.info("New SSE connection established: {}", connectionId);
+        logger.info("New SSE connection: {}", clientId);
+
+        SseEmitter emitter = new SseEmitter(300000L); // 5 minutes timeout
+        activeConnections.put(clientId, emitter);
+
+        final String finalClientId = clientId;
+
+        emitter.onCompletion(() -> {
+            activeConnections.remove(finalClientId);
+            logger.info("SSE connection completed: {}", finalClientId);
+        });
+
+        emitter.onError(throwable -> {
+            activeConnections.remove(finalClientId);
+            logger.warn("SSE connection error for {}: {}", finalClientId, throwable.getMessage());
+        });
+
+        emitter.onTimeout(() -> {
+            activeConnections.remove(finalClientId);
+            logger.info("SSE connection timeout: {}", finalClientId);
+        });
 
         try {
-            // Send endpoint event with message endpoint URL
-            Map<String, Object> endpointEvent = Map.of(
-                "type", "endpoint",
-                "uri", "/mcp/message",
-                "connectionId", connectionId
-            );
-            String eventData = "event: endpoint\ndata: " + objectMapper.writeValueAsString(endpointEvent) + "\n\n";
-            sink.tryEmitNext(eventData);
-
-            logger.debug("Sent endpoint event to connection: {}", connectionId);
-        } catch (Exception e) {
-            logger.error("Failed to send endpoint event", e);
-            connections.remove(connectionId);
-            sink.tryEmitError(e);
+            SseEmitter.SseEventBuilder event = SseEmitter.event()
+                    .id("init-" + System.currentTimeMillis())
+                    .name("connection")
+                    .data("Connected to MCP Server", MediaType.TEXT_PLAIN);
+            emitter.send(event);
+        } catch (IOException e) {
+            logger.error("Error sending initial SSE message: {}", e.getMessage(), e);
+            activeConnections.remove(finalClientId);
+            emitter.completeWithError(e);
         }
 
-        return sink.asFlux()
-            .doOnCancel(() -> {
-                logger.info("SSE connection cancelled: {}", connectionId);
-                connections.remove(connectionId);
-            })
-            .doOnTerminate(() -> {
-                logger.info("SSE connection terminated: {}", connectionId);
-                connections.remove(connectionId);
-            })
-            .mergeWith(Flux.interval(Duration.ofSeconds(30))
-                .map(tick -> "event: heartbeat\ndata: {\"type\":\"heartbeat\"}\n\n"));
+        return emitter;
     }
 
-    /**
-     * Handle MCP messages via HTTP POST
-     */
-    @PostMapping(path = "/message",
-                consumes = MediaType.APPLICATION_JSON_VALUE,
-                produces = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<ResponseEntity<Map<String, Object>>> handleMessage(
-            @RequestBody McpMessage request,
-            @RequestHeader(value = "X-MCP-Connection-ID", required = false) String connectionId) {
+    @PostMapping("/broadcast")
+    public String broadcastMessage(@RequestBody McpMessage message) {
+        logger.debug("Broadcasting message to {} connections", activeConnections.size());
 
-        logger.debug("Received MCP message: {} from connection: {}", request, connectionId);
+        int successCount = 0;
+        int failCount = 0;
 
-        return mcpServer.handleMessage(request)
-            .map(response -> {
-                if (response != null) {
-                    // Send response via SSE if we have a connection
-                    if (connectionId != null && connections.containsKey(connectionId)) {
-                        sendViaSse(connectionId, response);
-                        return ResponseEntity.ok(Map.<String, Object>of("status", "sent"));
-                    } else {
-                        // Fallback: return response directly
-                        return ResponseEntity.ok(responseToMap(response));
-                    }
-                } else {
-                    return ResponseEntity.ok(Map.<String, Object>of("status", "processed"));
-                }
-            })
-            .onErrorReturn(ResponseEntity.status(500)
-                .body(Map.of("error", "Internal server error")));
-    }
+        for (var entry : activeConnections.entrySet()) {
+            String clientId = entry.getKey();
+            SseEmitter emitter = entry.getValue();
 
-    /**
-     * Health check endpoint
-     */
-    @GetMapping("/health")
-    public ResponseEntity<Map<String, Object>> health() {
-        Map<String, Object> health = Map.of(
-            "status", "OK",
-            "transport", "HTTP+SSE",
-            "activeConnections", connections.size(),
-            "timestamp", System.currentTimeMillis()
-        );
-        return ResponseEntity.ok(health);
-    }
-
-    /**
-     * Server info endpoint
-     */
-    @GetMapping("/info")
-    public ResponseEntity<Map<String, Object>> info() {
-        Map<String, Object> info = Map.of(
-            "name", "MCP Java Server",
-            "transport", "HTTP+SSE",
-            "version", "1.0.0",
-            "description", "HTTP+SSE transport for Model Context Protocol",
-            "endpoints", Map.of(
-                "sse", "/mcp/sse",
-                "message", "/mcp/message",
-                "health", "/mcp/health"
-            )
-        );
-        return ResponseEntity.ok(info);
-    }
-
-    private void sendViaSse(String connectionId, McpMessage message) {
-        Sinks.Many<String> sink = connections.get(connectionId);
-        if (sink != null) {
             try {
-                String eventData = "event: message\ndata: " +
-                    objectMapper.writeValueAsString(responseToMap(message)) + "\n\n";
-                sink.tryEmitNext(eventData);
-                logger.debug("Sent response via SSE to connection: {}", connectionId);
-            } catch (Exception e) {
-                logger.error("Failed to send message via SSE to connection: " + connectionId, e);
-                connections.remove(connectionId);
-                sink.tryEmitError(e);
+                String messageData = objectMapper.writeValueAsString(message);
+                SseEmitter.SseEventBuilder event = SseEmitter.event()
+                        .id(String.valueOf(message.getId()))
+                        .name("message")
+                        .data(messageData, MediaType.APPLICATION_JSON);
+
+                emitter.send(event);
+                successCount++;
+
+            } catch (IOException e) {
+                logger.warn("Failed to send message to client {}: {}", clientId, e.getMessage());
+                activeConnections.remove(clientId);
+                emitter.completeWithError(e);
+                failCount++;
             }
         }
+
+        logger.debug("Broadcast complete: {} success, {} failed", successCount, failCount);
+        return String.format("Broadcast to %d connections (%d success, %d failed)",
+                activeConnections.size(), successCount, failCount);
     }
 
-    private Map<String, Object> responseToMap(McpMessage message) {
-        Map<String, Object> map = Map.of(
-            "jsonrpc", message.getJsonrpc(),
-            "id", message.getId() != null ? message.getId() : "",
-            "result", message.getResult() != null ? message.getResult() : Map.of()
+    @GetMapping("/connections")
+    public Object getActiveConnections() {
+        return java.util.Map.of(
+                "count", activeConnections.size(),
+                "connections", activeConnections.keySet()
         );
-        return map;
+    }
+
+    private void startHeartbeat() {
+        scheduler.scheduleAtFixedRate(() -> {
+            if (activeConnections.isEmpty()) {
+                return;
+            }
+
+            logger.debug("Sending heartbeat to {} connections", activeConnections.size());
+
+            for (var entry : activeConnections.entrySet()) {
+                String clientId = entry.getKey();
+                SseEmitter emitter = entry.getValue();
+
+                try {
+                    SseEmitter.SseEventBuilder event = SseEmitter.event()
+                            .id("heartbeat-" + System.currentTimeMillis())
+                            .name("heartbeat")
+                            .data("ping", MediaType.TEXT_PLAIN);
+
+                    emitter.send(event);
+
+                } catch (IOException e) {
+                    logger.debug("Heartbeat failed for client {}, removing connection", clientId);
+                    activeConnections.remove(clientId);
+                    emitter.completeWithError(e);
+                }
+            }
+        }, 30, 30, TimeUnit.SECONDS);
+
+        logger.info("Heartbeat scheduler started (30s interval)");
+    }
+
+    public void shutdown() {
+        logger.info("Shutting down SSE controller...");
+
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
+        activeConnections.values().forEach(SseEmitter::complete);
+        activeConnections.clear();
+
+        logger.info("SSE controller shutdown complete");
     }
 }

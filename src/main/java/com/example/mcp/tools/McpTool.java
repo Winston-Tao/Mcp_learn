@@ -1,9 +1,8 @@
 package com.example.mcp.tools;
 
-import reactor.core.publisher.Mono;
+import com.fasterxml.jackson.databind.JsonNode;
 
-import java.util.List;
-import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 public interface McpTool {
 
@@ -11,7 +10,15 @@ public interface McpTool {
 
     String getDescription();
 
-    Map<String, Object> getInputSchema();
+    JsonNode getInputSchema();
 
-    Mono<List<Map<String, Object>>> execute(Map<String, Object> arguments);
+    CompletableFuture<Object> execute(JsonNode parameters);
+
+    default boolean isEnabled() {
+        return true;
+    }
+
+    default String getVersion() {
+        return "1.0.0";
+    }
 }

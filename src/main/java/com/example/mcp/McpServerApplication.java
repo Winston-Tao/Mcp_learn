@@ -1,10 +1,9 @@
 package com.example.mcp;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.ApplicationContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @SpringBootApplication
 public class McpServerApplication {
@@ -12,11 +11,14 @@ public class McpServerApplication {
     private static final Logger logger = LoggerFactory.getLogger(McpServerApplication.class);
 
     public static void main(String[] args) {
-        logger.info("Starting MCP Java Server...");
+        logger.info("Starting MCP Server Application...");
 
-        ApplicationContext context = SpringApplication.run(McpServerApplication.class, args);
-
-        logger.info("MCP Java Server started successfully");
-        logger.info("Available beans: {}", context.getBeanDefinitionCount());
+        try {
+            SpringApplication.run(McpServerApplication.class, args);
+            logger.info("MCP Server started successfully");
+        } catch (Exception e) {
+            logger.error("Failed to start MCP Server: {}", e.getMessage(), e);
+            System.exit(1);
+        }
     }
 }

@@ -1,36 +1,40 @@
 package com.example.mcp.resources;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 public abstract class AbstractResourceProvider implements McpResourceProvider {
 
     protected final Logger logger = LoggerFactory.getLogger(getClass());
+    protected final ObjectMapper objectMapper = new ObjectMapper();
 
-    protected Map<String, Object> createResource(String uri, String name, String description, String mimeType) {
-        return Map.of(
-            "uri", uri,
-            "name", name,
-            "description", description,
-            "mimeType", mimeType
-        );
+    @Override
+    public CompletableFuture<Object> read() {
+        logger.debug("Reading resource: {}", getUri());
+
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                Object data = doRead();
+                logger.debug("Resource {} read successfully", getUri());
+                return data;
+            } catch (Exception e) {
+                logger.error("Error reading resource {}: {}", getUri(), e.getMessage(), e);
+                throw new RuntimeException("Resource read failed: " + e.getMessage(), e);
+            }
+        });
     }
 
-    protected Map<String, Object> createTextContent(String text) {
-        return Map.of(
-            "uri", "",
-            "mimeType", "text/plain",
-            "text", text
-        );
-    }
+    protected abstract Object doRead() throws Exception;
 
-    protected Map<String, Object> createJsonContent(Object data) {
-        return Map.of(
-            "uri", "",
-            "mimeType", "application/json",
-            "text", data.toString()
-        );
+    protected void validateResource() throws Exception {
+        if (getUri() == null || getUri().trim().isEmpty()) {
+            throw new IllegalStateException("Resource URI cannot be null or empty");
+        }
+        if (getName() == null || getName().trim().isEmpty()) {
+            throw new IllegalStateException("Resource name cannot be null or empty");
+        }
     }
 }

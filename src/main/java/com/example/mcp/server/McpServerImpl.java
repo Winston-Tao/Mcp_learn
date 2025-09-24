@@ -1,278 +1,279 @@
 package com.example.mcp.server;
 
-import com.example.mcp.config.ServerConfig;
-import com.example.mcp.tools.McpTool;
-import com.example.mcp.resources.McpResourceProvider;
-import com.example.mcp.prompts.McpPromptProvider;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
 
-import jakarta.annotation.PostConstruct;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 @Service
 public class McpServerImpl {
 
     private static final Logger logger = LoggerFactory.getLogger(McpServerImpl.class);
 
-    private final ServerConfig serverConfig;
     private final ObjectMapper objectMapper;
-    private final Map<String, McpTool> tools = new ConcurrentHashMap<>();
-    private final Map<String, McpResourceProvider> resourceProviders = new ConcurrentHashMap<>();
-    private final Map<String, McpPromptProvider> promptProviders = new ConcurrentHashMap<>();
-    private final AtomicLong requestIdCounter = new AtomicLong(1);
+    private final Map<String, Function<JsonNode, CompletableFuture<Object>>> methodHandlers;
+    private final Map<String, Object> serverCapabilities;
+    private volatile String currentLogLevel = "INFO";
+
+    @Value("${mcp.version:2025-06-18}")
+    private String protocolVersion;
+
+    @Value("${mcp.server.name:Java MCP Server}")
+    private String serverName;
+
+    @Value("${mcp.server.version:1.0.0}")
+    private String serverVersion;
 
     @Autowired
-    public McpServerImpl(ServerConfig serverConfig, ObjectMapper objectMapper) {
-        this.serverConfig = serverConfig;
+    public McpServerImpl(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+        this.methodHandlers = new ConcurrentHashMap<>();
+        this.serverCapabilities = new HashMap<>();
+
+        initializeMethodHandlers();
+        initializeCapabilities();
+
+        logger.info("MCP Server initialized with protocol version: {}", protocolVersion);
     }
 
-    @PostConstruct
-    public void initialize() {
-        logger.info("Initializing MCP Server: {} v{}",
-            serverConfig.getName(), serverConfig.getVersion());
-        logger.info("Server capabilities: tools={}, resources={}, prompts={}, logging={}",
-            serverConfig.getCapabilities().isTools(),
-            serverConfig.getCapabilities().isResources(),
-            serverConfig.getCapabilities().isPrompts(),
-            serverConfig.getCapabilities().isLogging());
+    private void initializeMethodHandlers() {
+        methodHandlers.put("initialize", this::handleInitialize);
+        methodHandlers.put("ping", this::handlePing);
+        methodHandlers.put("tools/list", this::handleToolsList);
+        methodHandlers.put("tools/call", this::handleToolsCall);
+        methodHandlers.put("resources/list", this::handleResourcesList);
+        methodHandlers.put("resources/read", this::handleResourcesRead);
+        methodHandlers.put("prompts/list", this::handlePromptsList);
+        methodHandlers.put("prompts/get", this::handlePromptsGet);
+        methodHandlers.put("logging/setLevel", this::handleLoggingSetLevel);
+
+        logger.debug("Initialized {} method handlers", methodHandlers.size());
     }
 
-    public Mono<McpMessage> handleMessage(McpMessage message) {
-        try {
-            if (message.isRequest()) {
-                return handleRequest(message);
-            } else if (message.isNotification()) {
-                return handleNotification(message);
-            } else {
-                return Mono.just(McpMessage.error(message.getId(),
-                    McpError.invalidRequest()));
-            }
-        } catch (Exception e) {
-            logger.error("Error handling message: {}", message, e);
-            return Mono.just(McpMessage.error(message.getId(),
-                McpError.internalError(e.getMessage())));
+    private void initializeCapabilities() {
+        serverCapabilities.put("tools", true);
+        serverCapabilities.put("resources", true);
+        serverCapabilities.put("prompts", true);
+        serverCapabilities.put("logging", true);
+        serverCapabilities.put("sampling", false);
+        serverCapabilities.put("roots", false);
+
+        logger.debug("Server capabilities: {}", serverCapabilities);
+    }
+
+    public CompletableFuture<McpMessage> processMessage(McpMessage message) {
+        logger.debug("Processing message: {}", message);
+
+        if (message == null) {
+            return CompletableFuture.completedFuture(
+                McpMessage.createErrorResponse(null, McpError.invalidRequest("Message is null"))
+            );
         }
+
+        if (!"2.0".equals(message.getJsonrpc())) {
+            return CompletableFuture.completedFuture(
+                McpMessage.createErrorResponse(message.getId(),
+                    McpError.invalidRequest("Invalid JSON-RPC version"))
+            );
+        }
+
+        if (message.isNotification()) {
+            handleNotification(message);
+            return CompletableFuture.completedFuture(null);
+        }
+
+        if (message.isRequest()) {
+            return handleRequest(message);
+        }
+
+        return CompletableFuture.completedFuture(
+            McpMessage.createErrorResponse(message.getId(),
+                McpError.invalidRequest("Invalid message format"))
+        );
     }
 
-    private Mono<McpMessage> handleRequest(McpMessage request) {
+    private CompletableFuture<McpMessage> handleRequest(McpMessage request) {
         String method = request.getMethod();
+        Object id = request.getId();
 
-        switch (method) {
-            case "initialize":
-                return handleInitialize(request);
-            case "tools/list":
-                return handleToolsList(request);
-            case "tools/call":
-                return handleToolsCall(request);
-            case "resources/list":
-                return handleResourcesList(request);
-            case "resources/read":
-                return handleResourcesRead(request);
-            case "prompts/list":
-                return handlePromptsList(request);
-            case "prompts/get":
-                return handlePromptsGet(request);
-            default:
-                return Mono.just(McpMessage.error(request.getId(),
-                    McpError.methodNotFound(method)));
+        logger.debug("Handling request: method={}, id={}", method, id);
+
+        Function<JsonNode, CompletableFuture<Object>> handler = methodHandlers.get(method);
+        if (handler == null) {
+            logger.warn("Method not found: {}", method);
+            return CompletableFuture.completedFuture(
+                McpMessage.createErrorResponse(id, McpError.methodNotFound(method))
+            );
+        }
+
+        try {
+            return handler.apply(request.getParams())
+                .thenApply(result -> McpMessage.createResponse(id, result))
+                .exceptionally(throwable -> {
+                    logger.error("Error handling request {}: {}", method, throwable.getMessage(), throwable);
+                    return McpMessage.createErrorResponse(id,
+                        McpError.internalError(throwable.getMessage()));
+                });
+        } catch (Exception e) {
+            logger.error("Exception handling request {}: {}", method, e.getMessage(), e);
+            return CompletableFuture.completedFuture(
+                McpMessage.createErrorResponse(id, McpError.internalError(e.getMessage()))
+            );
         }
     }
 
-    private Mono<McpMessage> handleNotification(McpMessage notification) {
+    private void handleNotification(McpMessage notification) {
         String method = notification.getMethod();
-        logger.debug("Received notification: {}", method);
+        logger.debug("Handling notification: method={}", method);
 
-        switch (method) {
-            case "notifications/initialized":
-                logger.info("Client initialized");
-                break;
-            case "logging/setLevel":
-                logger.info("Log level changed");
-                break;
-            default:
-                logger.warn("Unknown notification method: {}", method);
+        Function<JsonNode, CompletableFuture<Object>> handler = methodHandlers.get(method);
+        if (handler != null) {
+            handler.apply(notification.getParams())
+                .whenComplete((result, throwable) -> {
+                    if (throwable != null) {
+                        logger.warn("Error handling notification {}: {}", method, throwable.getMessage());
+                    } else {
+                        logger.debug("Notification {} handled successfully", method);
+                    }
+                });
+        } else {
+            logger.debug("No handler for notification method: {}", method);
         }
-
-        return Mono.empty();
     }
 
-    private Mono<McpMessage> handleInitialize(McpMessage request) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("protocolVersion", "2025-06-18");
+    private CompletableFuture<Object> handleInitialize(JsonNode params) {
+        logger.info("Handling initialize request");
 
-        Map<String, Object> serverInfo = new HashMap<>();
-        serverInfo.put("name", serverConfig.getName());
-        serverInfo.put("version", serverConfig.getVersion());
-        result.put("serverInfo", serverInfo);
+        Map<String, Object> response = new HashMap<>();
+        response.put("protocolVersion", protocolVersion);
+        response.put("capabilities", serverCapabilities);
+        response.put("serverInfo", Map.of(
+            "name", serverName,
+            "version", serverVersion
+        ));
 
-        Map<String, Object> capabilities = new HashMap<>();
-
-        if (serverConfig.getCapabilities().isTools()) {
-            capabilities.put("tools", Map.of("listChanged", false));
-        }
-
-        if (serverConfig.getCapabilities().isResources()) {
-            Map<String, Object> resourcesCapability = new HashMap<>();
-            resourcesCapability.put("subscribe", serverConfig.getCapabilities().isResourceSubscriptions());
-            resourcesCapability.put("listChanged", false);
-            capabilities.put("resources", resourcesCapability);
-        }
-
-        if (serverConfig.getCapabilities().isPrompts()) {
-            capabilities.put("prompts", Map.of("listChanged", false));
-        }
-
-        if (serverConfig.getCapabilities().isLogging()) {
-            capabilities.put("logging", Collections.emptyMap());
-        }
-
-        result.put("capabilities", capabilities);
-
-        return Mono.just(McpMessage.response(request.getId(), result));
+        logger.info("Server initialized successfully");
+        return CompletableFuture.completedFuture(response);
     }
 
-    private Mono<McpMessage> handleToolsList(McpMessage request) {
-        List<Map<String, Object>> toolList = new ArrayList<>();
-
-        for (McpTool tool : tools.values()) {
-            Map<String, Object> toolInfo = new HashMap<>();
-            toolInfo.put("name", tool.getName());
-            toolInfo.put("description", tool.getDescription());
-            toolInfo.put("inputSchema", tool.getInputSchema());
-            toolList.add(toolInfo);
-        }
-
-        Map<String, Object> result = Map.of("tools", toolList);
-        return Mono.just(McpMessage.response(request.getId(), result));
+    private CompletableFuture<Object> handlePing(JsonNode params) {
+        logger.debug("Handling ping request");
+        return CompletableFuture.completedFuture(Map.of("status", "pong"));
     }
 
-    private Mono<McpMessage> handleToolsCall(McpMessage request) {
-        Map<String, Object> params = request.getParams();
-        if (params == null) {
-            return Mono.just(McpMessage.error(request.getId(),
-                McpError.invalidParams("Missing parameters")));
-        }
-
-        String toolName = (String) params.get("name");
-        Map<String, Object> arguments = (Map<String, Object>) params.get("arguments");
-
-        if (toolName == null) {
-            return Mono.just(McpMessage.error(request.getId(),
-                McpError.invalidParams("Missing tool name")));
-        }
-
-        McpTool tool = tools.get(toolName);
-        if (tool == null) {
-            return Mono.just(McpMessage.error(request.getId(),
-                McpError.methodNotFound("Tool not found: " + toolName)));
-        }
-
-        return tool.execute(arguments != null ? arguments : Collections.emptyMap())
-            .map(result -> McpMessage.response(request.getId(), Map.of("content", result)))
-            .onErrorReturn(McpMessage.error(request.getId(),
-                McpError.internalError("Tool execution failed")));
+    private CompletableFuture<Object> handleToolsList(JsonNode params) {
+        logger.debug("Handling tools/list request");
+        return CompletableFuture.completedFuture(
+            Map.of("tools", java.util.List.of())
+        );
     }
 
-    private Mono<McpMessage> handleResourcesList(McpMessage request) {
-        List<Map<String, Object>> resourceList = new ArrayList<>();
-
-        for (McpResourceProvider provider : resourceProviders.values()) {
-            resourceList.addAll(provider.listResources());
-        }
-
-        Map<String, Object> result = Map.of("resources", resourceList);
-        return Mono.just(McpMessage.response(request.getId(), result));
+    private CompletableFuture<Object> handleToolsCall(JsonNode params) {
+        logger.debug("Handling tools/call request");
+        return CompletableFuture.failedFuture(
+            new UnsupportedOperationException("Tools not implemented yet")
+        );
     }
 
-    private Mono<McpMessage> handleResourcesRead(McpMessage request) {
-        Map<String, Object> params = request.getParams();
-        if (params == null) {
-            return Mono.just(McpMessage.error(request.getId(),
-                McpError.invalidParams("Missing parameters")));
-        }
+    private CompletableFuture<Object> handleResourcesList(JsonNode params) {
+        logger.debug("Handling resources/list request");
+        return CompletableFuture.completedFuture(
+            Map.of("resources", java.util.List.of())
+        );
+    }
 
-        String uri = (String) params.get("uri");
-        if (uri == null) {
-            return Mono.just(McpMessage.error(request.getId(),
-                McpError.invalidParams("Missing URI")));
-        }
+    private CompletableFuture<Object> handleResourcesRead(JsonNode params) {
+        logger.debug("Handling resources/read request");
+        return CompletableFuture.failedFuture(
+            new UnsupportedOperationException("Resources not implemented yet")
+        );
+    }
 
-        for (McpResourceProvider provider : resourceProviders.values()) {
-            if (provider.canHandle(uri)) {
-                return provider.readResource(uri)
-                    .map(content -> McpMessage.response(request.getId(), Map.of("contents", content)))
-                    .onErrorReturn(McpMessage.error(request.getId(),
-                        McpError.internalError("Resource read failed")));
+    private CompletableFuture<Object> handlePromptsList(JsonNode params) {
+        logger.debug("Handling prompts/list request");
+        return CompletableFuture.completedFuture(
+            Map.of("prompts", java.util.List.of())
+        );
+    }
+
+    private CompletableFuture<Object> handlePromptsGet(JsonNode params) {
+        logger.debug("Handling prompts/get request");
+        return CompletableFuture.failedFuture(
+            new UnsupportedOperationException("Prompts not implemented yet")
+        );
+    }
+
+    private CompletableFuture<Object> handleLoggingSetLevel(JsonNode params) {
+        logger.debug("Handling logging/setLevel request");
+
+        try {
+            if (params == null || !params.has("level")) {
+                return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("Missing required parameter: level")
+                );
             }
-        }
 
-        return Mono.just(McpMessage.error(request.getId(),
-            McpError.methodNotFound("Resource not found: " + uri)));
-    }
+            String level = params.get("level").asText().toUpperCase();
 
-    private Mono<McpMessage> handlePromptsList(McpMessage request) {
-        List<Map<String, Object>> promptList = new ArrayList<>();
-
-        for (McpPromptProvider provider : promptProviders.values()) {
-            promptList.addAll(provider.listPrompts());
-        }
-
-        Map<String, Object> result = Map.of("prompts", promptList);
-        return Mono.just(McpMessage.response(request.getId(), result));
-    }
-
-    private Mono<McpMessage> handlePromptsGet(McpMessage request) {
-        Map<String, Object> params = request.getParams();
-        if (params == null) {
-            return Mono.just(McpMessage.error(request.getId(),
-                McpError.invalidParams("Missing parameters")));
-        }
-
-        String name = (String) params.get("name");
-        Map<String, Object> arguments = (Map<String, Object>) params.get("arguments");
-
-        if (name == null) {
-            return Mono.just(McpMessage.error(request.getId(),
-                McpError.invalidParams("Missing prompt name")));
-        }
-
-        for (McpPromptProvider provider : promptProviders.values()) {
-            if (provider.hasPrompt(name)) {
-                return provider.getPrompt(name, arguments != null ? arguments : Collections.emptyMap())
-                    .map(result -> McpMessage.response(request.getId(), result))
-                    .onErrorReturn(McpMessage.error(request.getId(),
-                        McpError.internalError("Prompt generation failed")));
+            // Validate log level
+            if (!isValidLogLevel(level)) {
+                return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("Invalid log level: " + level)
+                );
             }
+
+            String previousLevel = currentLogLevel;
+            currentLogLevel = level;
+
+            logger.info("Log level changed from {} to {}", previousLevel, level);
+
+            // Send logging entry notification about level change
+            sendLoggingEntry("INFO", "Log level changed to " + level,
+                Map.of("previousLevel", previousLevel, "newLevel", level));
+
+            return CompletableFuture.completedFuture(Map.of());
+
+        } catch (Exception e) {
+            logger.error("Error handling logging/setLevel: {}", e.getMessage(), e);
+            return CompletableFuture.failedFuture(e);
         }
-
-        return Mono.just(McpMessage.error(request.getId(),
-            McpError.methodNotFound("Prompt not found: " + name)));
     }
 
-    public void registerTool(McpTool tool) {
-        tools.put(tool.getName(), tool);
-        logger.info("Registered tool: {}", tool.getName());
+    private boolean isValidLogLevel(String level) {
+        return level.matches("TRACE|DEBUG|INFO|WARN|ERROR");
     }
 
-    public void registerResourceProvider(String name, McpResourceProvider provider) {
-        resourceProviders.put(name, provider);
-        logger.info("Registered resource provider: {}", name);
+    public void sendLoggingEntry(String level, String message, Object data) {
+        // This method would typically send a logging/entry notification to the client
+        // For now, we'll just log it locally
+        logger.info("Logging entry [{}]: {} - Data: {}", level, message, data);
+
+        // In a complete implementation, you would send this as a notification:
+        // McpMessage notification = McpMessage.createNotification("logging/entry",
+        //     objectMapper.valueToTree(Map.of(
+        //         "level", level,
+        //         "message", message,
+        //         "data", data,
+        //         "timestamp", Instant.now().toString()
+        //     )));
+        // // Send notification to client...
     }
 
-    public void registerPromptProvider(String name, McpPromptProvider provider) {
-        promptProviders.put(name, provider);
-        logger.info("Registered prompt provider: {}", name);
+    public void registerMethodHandler(String method, Function<JsonNode, CompletableFuture<Object>> handler) {
+        methodHandlers.put(method, handler);
+        logger.debug("Registered handler for method: {}", method);
     }
 
-    public long generateRequestId() {
-        return requestIdCounter.getAndIncrement();
+    public Map<String, Object> getServerCapabilities() {
+        return new HashMap<>(serverCapabilities);
     }
 }

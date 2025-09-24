@@ -1,15 +1,29 @@
 package com.example.mcp.resources;
 
-import reactor.core.publisher.Mono;
-
-import java.util.List;
-import java.util.Map;
+import java.net.URI;
+import java.util.concurrent.CompletableFuture;
 
 public interface McpResourceProvider {
 
-    List<Map<String, Object>> listResources();
+    String getUri();
 
-    boolean canHandle(String uri);
+    String getName();
 
-    Mono<List<Map<String, Object>>> readResource(String uri);
+    String getDescription();
+
+    String getMimeType();
+
+    CompletableFuture<Object> read();
+
+    default boolean isReadable() {
+        return true;
+    }
+
+    default String getVersion() {
+        return "1.0.0";
+    }
+
+    default Object getMetadata() {
+        return null;
+    }
 }

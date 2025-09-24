@@ -1,45 +1,51 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /mcp
+
 spring:
   application:
-    name: mcp-java-server
-
-  main:
-    web-application-type: reactive
-
-server:
-  port: 18060
-
-mcp:
-  server:
-    name: "mcp-java-server"
-    version: "1.0.0"
-    description: "MCP Java Server Implementation for Learning"
-
-    transport:
-      type: STDIO
-
-    capabilities:
-      tools: true
-      resources: true
-      prompts: true
-      logging: true
-      resourceSubscriptions: false
-
-logging:
-  level:
-    com.example.mcp: DEBUG
-    reactor: WARN
-    org.springframework: INFO
-
-  pattern:
-    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"
-
-  file:
-    name: logs/mcp-server.log
+    name: mcp-server
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      indent-output: false
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
 
 management:
   endpoints:
-    enabled-by-default: false
+    web:
+      exposure:
+        include: health,info,metrics
   endpoint:
     health:
+      show-details: when_authorized
+
+logging:
+  level:
+    root: INFO
+    com.example.mcp: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"
+  file:
+    name: logs/mcp-server.log
+
+mcp:
+  version: "2025-06-18"
+  server:
+    name: "Java MCP Server"
+    version: "1.0.0"
+  capabilities:
+    tools: true
+    resources: true
+    prompts: true
+    logging: true
+  transport:
+    http:
       enabled: true
+      endpoint: "/api/mcp"
+      sse:
+        enabled: true

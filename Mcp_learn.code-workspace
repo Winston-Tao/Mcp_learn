@@ -1,22 +1,7 @@
 {
-	"folders": [
-		{
-			"path": "."
-		}
-	],
-	"settings": {
-		"java.compile.nullAnalysis.mode": "automatic"
-	},
-	"launch": {
-		"version": "0.2.0",
-		"configurations": [
-			{
-				"type": "java",
-				"request": "attach",
-				"name": "Attach by Process ID",
-				"processId": "${command:PickJavaProcess}"
-			}
-
-		]
-	}
+    "folders": [
+        {
+            "path": "."
+        }
+    ]
 }
